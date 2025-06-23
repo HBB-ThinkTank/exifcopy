@@ -1,0 +1,18 @@
+[package]
+name = "exifcopy"
+version = "0.9.0"
+edition = "2024"
+authors = ["Holger Burghardt"]
+description = "Copies metadata from an original JPEG to an optimized version, preserving all identifiable metadata, including but not limited to EXIF, XMP, and IPTC."
+license = "AGPL-3.0-or-later"
+license-file = "LICENSE"
+repository = "https://github.com/HBB-ThinkTank/exifcopy"
+homepage = "https://github.com/HBB-ThinkTank/exifcopy"
+readme = "README.md"
+keywords = ["jpeg", "exif", "metadata", "image", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
+
+[dependencies]
+filetime = "0.2.25"
+once_cell = "1.21.3"
+windows = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }
