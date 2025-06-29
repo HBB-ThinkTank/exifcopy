@@ -1,11 +1,11 @@
-// Neue Version mit eingebundener MarkerInfo-Map und Signaturerkennung Stand 2025-06-20 22:09:58.867 UTC
+// Neue Version mit eingebundener MarkerInfo-Map und Signaturerkennung Stand 2025-06-29 19:27:36.779 UTC
 
 use std::clone::Clone;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{File, metadata, OpenOptions};
 use std::io::{Read, Write, BufReader, Error, ErrorKind};
-use std::path::{Path};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use filetime::{FileTime, set_file_mtime};
 use once_cell::sync::Lazy;
@@ -21,8 +21,8 @@ use windows::core::PCWSTR;
 struct Config {
     keep_date_mode: u8,
     debug: bool,
-    source_path: String,
-    target_path: String,
+    source_path: PathBuf,
+    target_path: PathBuf,
 }
 
 impl Default for Config {
@@ -30,8 +30,8 @@ impl Default for Config {
         Config {
             keep_date_mode: 1,
             debug: false,
-            source_path: String::new(),
-            target_path: String::new(),
+            source_path: PathBuf::new(),
+            target_path: PathBuf::new(),
         }
     }
 }
@@ -114,8 +114,8 @@ fn parse_arguments() -> Result<Config, String> {
         return Err("Missing required <source.jpg> and <target.jpg> arguments".to_string());
     }
 
-	config.source_path = positional_args[positional_args.len() - 2].clone();
-	config.target_path = positional_args[positional_args.len() - 1].clone();
+	config.source_path = PathBuf::from(&positional_args[positional_args.len() - 2]);
+	config.target_path = PathBuf::from(&positional_args[positional_args.len() - 1]);
 
     *CONFIG.lock().unwrap() = config.clone();
 
@@ -217,16 +217,8 @@ fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> std:
         return Err(Error::new(ErrorKind::InvalidData, "Not a valid JPEG file (missing SOI marker)"));
     }
 	
+	buf.extend_from_slice(&soi); // fügt 0xFF, 0xD8 an den Anfang von buf
     reader.read_to_end(&mut buf)?;
-
-    let meta = metadata(path.as_ref()).ok();
-    let (ctime, mtime) = meta
-        .as_ref()
-        .map(|m| (
-            FileTime::from_creation_time(m).unwrap_or_else(FileTime::now),
-            FileTime::from_last_modification_time(m),
-        ))
-        .unwrap_or_else(|| (FileTime::now(), FileTime::now()));
 
     let marker_map = build_marker_map();
     let mut segments = Vec::new();
@@ -236,14 +228,24 @@ fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> std:
 	#[allow(unused_assignments)]
     let mut saw_sos = false;
 	
-    while i + 3 < buf.len() {
+	
+    while i + 1 < buf.len() {
         if buf[i] == 0xFF {
             if buf[i + 1] == 0x00 {
                 i += 2;
                 continue;
             }
+            if saw_sos {
+                if i + 1 >= buf.len() {
+                    break;
+                }
+                let marker_byte = buf[i + 1];
+                if !(marker_byte == 0xD9 || marker_byte == 0xFE || (0xE0..=0xEF).contains(&marker_byte)) {
+                    i += 1;
+                    continue;
+                }
+            }
             let marker = buf[i + 1];
-            i += 2;
             if marker == 0xD8 || marker == 0xD9 {
                 segments.push(JpegSegment {
                     marker,
@@ -253,8 +255,10 @@ fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> std:
                     description: marker_map.get(&marker).map(|m| m.description.to_string()).unwrap_or("".into()),
                     metadata_type: None,
                 });
+				i += 2;
                 continue;
             }
+            i += 2;
             if i + 2 > buf.len() { break; }
             let length = ((buf[i] as usize) << 8) + (buf[i + 1] as usize);
             i += 2;
@@ -277,16 +281,29 @@ fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> std:
             i += length - 2;
 
             if marker == 0xDA {
-                saw_sos = true;
-                if include_scan_data {
-                    scan_data = buf[i..].to_vec();
-                }
-                break;
+				if !saw_sos {
+					saw_sos = true;
+					if include_scan_data {
+						scan_data = buf[i..].to_vec();
+					}
+				}
+				continue;
             }
         } else {
             i += 1;
         }
     }
+
+    // Dateisystem Zeitstempel anrufen
+    let meta = metadata(path.as_ref()).ok();
+    let (ctime, mtime) = meta
+        .as_ref()
+        .map(|m| (
+            FileTime::from_creation_time(m).unwrap_or_else(FileTime::now),
+            FileTime::from_last_modification_time(m),
+        ))
+        .unwrap_or_else(|| (FileTime::now(), FileTime::now()));
+
     Ok(ParsedJpeg {
         segments,
         scan_data,

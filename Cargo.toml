@@ -1,11 +1,10 @@
 [package]
 name = "exifcopy"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 authors = ["Holger Burghardt"]
 description = "Copies metadata from an original JPEG to an optimized version, preserving all identifiable metadata, including but not limited to EXIF, XMP, and IPTC."
 license = "AGPL-3.0-or-later"
-license-file = "LICENSE"
 repository = "https://github.com/HBB-ThinkTank/exifcopy"
 homepage = "https://github.com/HBB-ThinkTank/exifcopy"
 readme = "README.md"

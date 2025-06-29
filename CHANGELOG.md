@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.9.1] – 2025-06-29
+### Changed
+- Deutlich verbesserte JPEG-Parserlogik in `parse_jpeg_segments()`:
+  - SOI (Start of Image), SOS (Start of Scan) und EOI (End of Image) werden nun korrekt erkannt und als Segmente gespeichert.
+  - APP- und COM-Segmente nach SOS werden nicht mehr übersprungen, sondern verarbeitet – dies verbessert die Kompatibilität mit nicht standardkonformen JPEG-Dateien.
+- Verwendung von `PathBuf` anstelle einfacher Strings für Dateioperationen (Konfig- und Funktionsargumente).
+
+### Fixed
+- Endlosschleife bei fehlerhaftem JPEG-Marker-Handling zu Beginn der Datei wurde behoben.
+
+
+---
 
 ## [0.9.0] – 2025-06-23
 ### Added

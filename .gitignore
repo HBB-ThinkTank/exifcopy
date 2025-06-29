@@ -1,1 +1,16 @@
+# Ignoriere Build-Ordner von Cargo
 /target
+
+# Ignoriere temporäre Dateien
+*.tmp
+*.bak
+
+# Ignoriere ZIP-Release-Dateien
+*.zip
+
+# VS Code (falls du es nutzt)
+.vscode/
+
+# Mac/Windows-spezifisch
+.DS_Store
+Thumbs.db
