@@ -4,16 +4,26 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
-## [0.9.1] – 2025-06-29
+## [0.9.2] – 2025-07-06
 ### Changed
-- Deutlich verbesserte JPEG-Parserlogik in `parse_jpeg_segments()`:
-  - SOI (Start of Image), SOS (Start of Scan) und EOI (End of Image) werden nun korrekt erkannt und als Segmente gespeichert.
-  - APP- und COM-Segmente nach SOS werden nicht mehr übersprungen, sondern verarbeitet – dies verbessert die Kompatibilität mit nicht standardkonformen JPEG-Dateien.
-- Verwendung von `PathBuf` anstelle einfacher Strings für Dateioperationen (Konfig- und Funktionsargumente).
+- Added XMP, EXIF and IPTC parsers for creation and modification times; all parsing is handled internally.
+- Enhanced debug output: creation and modification times are now also displayed in human-readable `YYYY.MM.DDTHH:MM:SS` format.
+- Prepared project for public release: revised project metadata and licensing files (`README.md`, `LICENSE`).
 
 ### Fixed
-- Endlosschleife bei fehlerhaftem JPEG-Marker-Handling zu Beginn der Datei wurde behoben.
+- Eliminated compiler warnings caused by deprecated methods in the `chrono` crate.
 
+---
+
+## [0.9.1] – 2025-06-29
+### Changed
+- Significantly improved JPEG segment parser in `parse_jpeg_segments()`:
+  - SOI (Start of Image), SOS (Start of Scan), and EOI (End of Image) are now correctly identified and preserved as segments.
+  - APP and COM segments located after the SOS marker are no longer skipped, improving compatibility with non-standard JPEG files.
+- Replaced plain strings with `PathBuf` for file operations (in configuration and function arguments).
+
+### Fixed
+- Resolved infinite loop triggered by faulty JPEG marker handling at the beginning of certain files.
 
 ---
 
