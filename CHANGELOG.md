@@ -6,7 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ---
 ## [0.9.2] – 2025-07-06
 ### Changed
-- Added XMP, EXIF and IPTC parsers for creation and modification times; all parsing is handled internally.
+- Added XMP, EXIF and IPTC parsers for creation and modification times to allow setting file timestamps; all parsing is handled internally.
 - Enhanced debug output: creation and modification times are now also displayed in human-readable `YYYY.MM.DDTHH:MM:SS` format.
 - Prepared project for public release: revised project metadata and licensing files (`README.md`, `LICENSE`).
 
