@@ -1,7 +1,9 @@
+use once_cell::sync::Lazy;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
+
+include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 
 // CONFIGURATION //
 
@@ -11,7 +13,7 @@ pub struct Config {
     pub debug: bool,
     pub source_path: PathBuf,
     pub target_path: PathBuf,
-	pub log_path: PathBuf,
+    pub log_path: PathBuf,
 }
 
 impl Default for Config {
@@ -21,14 +23,12 @@ impl Default for Config {
             debug: false,
             source_path: PathBuf::new(),
             target_path: PathBuf::new(),
-			log_path: PathBuf::new(),
+            log_path: PathBuf::new(),
         }
     }
 }
 
-pub static CONFIG: Lazy<Mutex<Config>> = Lazy::new(|| {
-    Mutex::new(Config::default())
-});
+pub static CONFIG: Lazy<Mutex<Config>> = Lazy::new(|| Mutex::new(Config::default()));
 
 pub struct ArgumentDefinition {
     pub name: &'static str,
@@ -72,16 +72,19 @@ pub fn parse_arguments() -> Result<Config, String> {
         } else {
             arg
         };
-        
-        if let Some(def) = ARG_DEFINITIONS.iter().find(|d| d.name == arg_key || d.alias == arg_key) {
+
+        if let Some(def) = ARG_DEFINITIONS
+            .iter()
+            .find(|d| d.name == arg_key || d.alias == arg_key)
+        {
             if def.name == "--help" {
-				if args.len() == 2 {
-					print_help();
-					std::process::exit(0);
-				} else {
-					print_help();
-				}
-			}
+                if args.len() == 2 {
+                    print_help();
+                    std::process::exit(0);
+                } else {
+                    print_help();
+                }
+            }
 
             if def.name == "--debug" {
                 config.debug = true;
@@ -96,7 +99,9 @@ pub fn parse_arguments() -> Result<Config, String> {
                 } else {
                     return Err("Missing value for --keepdate".into());
                 };
-                config.keep_date_mode = val.parse::<u8>().map_err(|_| "Invalid value for --keepdate (expected 0, 1, 2, 3)".to_string())?;
+                config.keep_date_mode = val.parse::<u8>().map_err(|_| {
+                    "Invalid value for --keepdate (expected 0, 1, 2, 3)".to_string()
+                })?;
                 if config.keep_date_mode > 3 {
                     return Err("Invalid value for --keepdate (expected 0, 1, 2, 3)".to_string());
                 }
@@ -118,8 +123,8 @@ pub fn parse_arguments() -> Result<Config, String> {
         return Err("Missing required <source.jpg> and <target.jpg> arguments".to_string());
     }
 
-	config.source_path = PathBuf::from(&positional_args[positional_args.len() - 2]);
-	config.target_path = PathBuf::from(&positional_args[positional_args.len() - 1]);
+    config.source_path = PathBuf::from(&positional_args[positional_args.len() - 2]);
+    config.target_path = PathBuf::from(&positional_args[positional_args.len() - 1]);
     config.log_path = {
         let mut path = config.target_path.clone();
         path.set_extension("log");
@@ -132,10 +137,21 @@ pub fn parse_arguments() -> Result<Config, String> {
 }
 
 pub fn print_help() {
-    println!("Usage: exifcopy [options] <source.jpg> <target.jpg>\n");
+    println!(
+        "{} v{} ({})",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        BUILD_DATE,
+    );
+    println!("© {} {} - Licensed under {}\n", BUILD_YEAR, env!("CARGO_PKG_AUTHORS"), env!("CARGO_PKG_LICENSE"));
+    println!("{}", env!("CARGO_PKG_REPOSITORY"));
+
+    println!("Usage:");
+    println!("  exifcopy [options] <source.jpg> <target.jpg>\n");
+
     println!("Options:");
     for def in ARG_DEFINITIONS {
-        println!("  {:<10} {:<4}  {}", def.name, def.alias, def.description);
+        println!("  {:<12} {:<4}  {}", def.name, def.alias, def.description);
     }
 }
 

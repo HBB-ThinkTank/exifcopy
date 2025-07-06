@@ -1,10 +1,8 @@
-// Version 0.9.2 Stand 2025-07-05 22:26:51.982 UTC
-
 // CONFIGURATION //
 use exifcopy::{CONFIG, parse_arguments, print_help};
 
 // // PARSING THE SOURCE JPEG // //
-use exifcopy::{parse_jpeg_segments};
+use exifcopy::parse_jpeg_segments;
 
 // LOGGING //
 
@@ -15,11 +13,6 @@ use exifcopy::{log_parsed_segments, write_log};
 use exifcopy::inject_metadata_segments;
 
 use std::clone::Clone;
-/*use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::Path;
-use std::str;
-*/
 
 pub fn main() {
     match parse_arguments() {
@@ -27,21 +20,21 @@ pub fn main() {
             if config.debug {
                 println!("[DEBUG] Configuration: {:?}", config);
             }
-			
-			*CONFIG.lock().unwrap() = config.clone(); // ▲❗ Konfiguration global speichern
 
-			let source_path = &config.source_path;
-			let target_path = &config.target_path;
+            *CONFIG.lock().unwrap() = config.clone(); // ▲❗ Konfiguration global speichern
+
+            let source_path = &config.source_path;
+            let target_path = &config.target_path;
 
             match parse_jpeg_segments(source_path, false) {
                 Ok(parsed_source) => {
                     // Nur im Debug-Modus: Schreiben der gefundenen Segmente der Quelldatei
-					let _ = write_log("Segmente der Quelldatei:");
-					if CONFIG.lock().unwrap().debug {
-						if let Err(e) = log_parsed_segments(&parsed_source) {
-							eprintln!("[ERROR] Log failed: {}", e);
-						}
-					}
+                    let _ = write_log("Segmente der Quelldatei:");
+                    if CONFIG.lock().unwrap().debug {
+                        if let Err(e) = log_parsed_segments(&parsed_source) {
+                            eprintln!("[ERROR] Log failed: {}", e);
+                        }
+                    }
 
                     if let Err(e) = inject_metadata_segments(target_path, &parsed_source) {
                         eprintln!("[ERROR] {}", e);

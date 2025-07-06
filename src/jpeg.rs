@@ -1,8 +1,8 @@
+use filetime::FileTime;
 use std::collections::HashMap;
 use std::fs::{File, metadata};
 use std::io::{BufReader, Error, ErrorKind, Read};
 use std::path::Path;
-use filetime::FileTime;
 
 // PARSING THE SOURCE JPEG //
 
@@ -10,9 +10,9 @@ pub struct JpegSegment {
     pub marker: u8,
     pub data: Vec<u8>,
     pub marker_name: String,
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     pub segment_type: String,
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     pub description: String,
     pub metadata_type: Option<String>,
 }
@@ -30,7 +30,10 @@ pub struct MarkerInfo {
     pub description: &'static str,
 }
 
-pub fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> std::io::Result<ParsedJpeg> {
+pub fn parse_jpeg_segments<P: AsRef<Path>>(
+    path: P,
+    include_scan_data: bool,
+) -> std::io::Result<ParsedJpeg> {
     let file = File::open(&path)?;
     let mut reader = BufReader::new(file);
     let mut buf = Vec::new();
@@ -39,21 +42,23 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> 
     reader.read_exact(&mut soi)?;
 
     if soi != [0xFF, 0xD8] {
-        return Err(Error::new(ErrorKind::InvalidData, "Not a valid JPEG file (missing SOI marker)"));
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "Not a valid JPEG file (missing SOI marker)",
+        ));
     }
-	
-	buf.extend_from_slice(&soi); // fügt 0xFF, 0xD8 an den Anfang von buf
+
+    buf.extend_from_slice(&soi); // fügt 0xFF, 0xD8 an den Anfang von buf
     reader.read_to_end(&mut buf)?;
 
     let marker_map = build_marker_map();
     let mut segments = Vec::new();
     let mut scan_data = Vec::new();
     let mut i = 0;
-	
-	#[allow(unused_assignments)]
+
+    #[allow(unused_assignments)]
     let mut saw_sos = false;
-	
-	
+
     while i + 1 < buf.len() {
         if buf[i] == 0xFF {
             if buf[i + 1] == 0x00 {
@@ -65,7 +70,10 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> 
                     break;
                 }
                 let marker_byte = buf[i + 1];
-                if !(marker_byte == 0xD9 || marker_byte == 0xFE || (0xE0..=0xEF).contains(&marker_byte)) {
+                if !(marker_byte == 0xD9
+                    || marker_byte == 0xFE
+                    || (0xE0..=0xEF).contains(&marker_byte))
+                {
                     i += 1;
                     continue;
                 }
@@ -75,28 +83,58 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> 
                 segments.push(JpegSegment {
                     marker,
                     data: Vec::new(),
-                    marker_name: marker_map.get(&marker).map(|m| m.name.to_string()).unwrap_or("Unbekannt".into()),
-                    segment_type: marker_map.get(&marker).map(|m| m.segment_type.to_string()).unwrap_or("Unbekannt".into()),
-                    description: marker_map.get(&marker).map(|m| m.description.to_string()).unwrap_or("".into()),
+                    marker_name: marker_map
+                        .get(&marker)
+                        .map(|m| m.name.to_string())
+                        .unwrap_or("Unbekannt".into()),
+                    segment_type: marker_map
+                        .get(&marker)
+                        .map(|m| m.segment_type.to_string())
+                        .unwrap_or("Unbekannt".into()),
+                    description: marker_map
+                        .get(&marker)
+                        .map(|m| m.description.to_string())
+                        .unwrap_or("".into()),
                     metadata_type: None,
                 });
-				i += 2;
+                i += 2;
                 continue;
             }
             i += 2;
-            if i + 2 > buf.len() { break; }
+            if i + 2 > buf.len() {
+                break;
+            }
             let length = ((buf[i] as usize) << 8) + (buf[i + 1] as usize);
             i += 2;
-            if i + length - 2 > buf.len() { break; }
+            if i + length - 2 > buf.len() {
+                break;
+            }
             let data = buf[i..i + length - 2].to_vec();
 
             let temp_segment = JpegSegment {
                 marker,
                 data: data.clone(),
-                marker_name: marker_map.get(&marker).map(|m| m.name.to_string()).unwrap_or("Unbekannt".into()),
-                segment_type: marker_map.get(&marker).map(|m| m.segment_type.to_string()).unwrap_or("Unbekannt".into()),
-                description: marker_map.get(&marker).map(|m| m.description.to_string()).unwrap_or("".into()),
-                metadata_type: identify_metadata_type(&JpegSegment { marker, data: data.clone(), marker_name: "".into(), segment_type: "".into(), description: "".into(), metadata_type: None }).map(|s| s.to_string()),
+                marker_name: marker_map
+                    .get(&marker)
+                    .map(|m| m.name.to_string())
+                    .unwrap_or("Unbekannt".into()),
+                segment_type: marker_map
+                    .get(&marker)
+                    .map(|m| m.segment_type.to_string())
+                    .unwrap_or("Unbekannt".into()),
+                description: marker_map
+                    .get(&marker)
+                    .map(|m| m.description.to_string())
+                    .unwrap_or("".into()),
+                metadata_type: identify_metadata_type(&JpegSegment {
+                    marker,
+                    data: data.clone(),
+                    marker_name: "".into(),
+                    segment_type: "".into(),
+                    description: "".into(),
+                    metadata_type: None,
+                })
+                .map(|s| s.to_string()),
             };
 
             if !saw_sos || temp_segment.metadata_type.is_some() {
@@ -106,13 +144,13 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> 
             i += length - 2;
 
             if marker == 0xDA {
-				if !saw_sos {
-					saw_sos = true;
-					if include_scan_data {
-						scan_data = buf[i..].to_vec();
-					}
-				}
-				continue;
+                if !saw_sos {
+                    saw_sos = true;
+                    if include_scan_data {
+                        scan_data = buf[i..].to_vec();
+                    }
+                }
+                continue;
             }
         } else {
             i += 1;
@@ -123,10 +161,12 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(path: P, include_scan_data: bool) -> 
     let meta = metadata(path.as_ref()).ok();
     let (ctime, mtime) = meta
         .as_ref()
-        .map(|m| (
-            FileTime::from_creation_time(m).unwrap_or_else(FileTime::now),
-            FileTime::from_last_modification_time(m),
-        ))
+        .map(|m| {
+            (
+                FileTime::from_creation_time(m).unwrap_or_else(FileTime::now),
+                FileTime::from_last_modification_time(m),
+            )
+        })
         .unwrap_or_else(|| (FileTime::now(), FileTime::now()));
 
     Ok(ParsedJpeg {
@@ -143,30 +183,191 @@ pub fn parse_jpeg_segments_default<P: AsRef<Path>>(path: P) -> std::io::Result<P
 
 pub fn build_marker_map() -> HashMap<u8, MarkerInfo> {
     let mut markers = HashMap::new();
-    markers.insert(0xD8, MarkerInfo { name: "SOI", segment_type: "Start", description: "Start of Image" });
-    markers.insert(0xD9, MarkerInfo { name: "EOI", segment_type: "End", description: "End of Image" });
-    markers.insert(0xDA, MarkerInfo { name: "SOS", segment_type: "Scan", description: "Start of Scan" });
-    markers.insert(0xC0, MarkerInfo { name: "SOF0", segment_type: "Frame", description: "Baseline DCT" });
-    markers.insert(0xC1, MarkerInfo { name: "SOF1", segment_type: "Frame", description: "Extended Sequential DCT" });
-    markers.insert(0xC2, MarkerInfo { name: "SOF2", segment_type: "Frame", description: "Progressive DCT" });
-    markers.insert(0xC3, MarkerInfo { name: "SOF3", segment_type: "Frame", description: "Lossless (sequential)" });
-    markers.insert(0xC4, MarkerInfo { name: "DHT", segment_type: "Table", description: "Huffman Table" });
-    markers.insert(0xC5, MarkerInfo { name: "SOF5", segment_type: "Frame", description: "Differential Sequential" });
-    markers.insert(0xC6, MarkerInfo { name: "SOF6", segment_type: "Frame", description: "Differential Progressive" });
-    markers.insert(0xC7, MarkerInfo { name: "SOF7", segment_type: "Frame", description: "Differential Lossless" });
-    markers.insert(0xC8, MarkerInfo { name: "SOF8", segment_type: "Frame", description: "Reserved (JPEG Extension)" });
-    markers.insert(0xC9, MarkerInfo { name: "SOF9", segment_type: "Frame", description: "Extended Sequential DCT, Differential" });
-    markers.insert(0xCA, MarkerInfo { name: "SOF10", segment_type: "Frame", description: "Progressive DCT, Differential" });
-    markers.insert(0xCB, MarkerInfo { name: "SOF11", segment_type: "Frame", description: "Lossless (Sequential), Differential" });
-    markers.insert(0xCC, MarkerInfo { name: "SOF12", segment_type: "Frame", description: "JPEG-LS" });
-    markers.insert(0xCD, MarkerInfo { name: "SOF13", segment_type: "Frame", description: "Reserved (JPEG Extension)" });
-    markers.insert(0xCE, MarkerInfo { name: "SOF14", segment_type: "Frame", description: "Reserved (JPEG Extension)" });
-    markers.insert(0xCF, MarkerInfo { name: "SOF15", segment_type: "Frame", description: "Reserved (JPEG Extension)" });
-    markers.insert(0xDB, MarkerInfo { name: "DQT", segment_type: "Table", description: "Quantization Table" });
-    markers.insert(0xDD, MarkerInfo { name: "DRI", segment_type: "Restart", description: "Restart Interval" });
-    markers.insert(0xFE, MarkerInfo { name: "COM", segment_type: "Comment", description: "Comment" });
+    markers.insert(
+        0xD8,
+        MarkerInfo {
+            name: "SOI",
+            segment_type: "Start",
+            description: "Start of Image",
+        },
+    );
+    markers.insert(
+        0xD9,
+        MarkerInfo {
+            name: "EOI",
+            segment_type: "End",
+            description: "End of Image",
+        },
+    );
+    markers.insert(
+        0xDA,
+        MarkerInfo {
+            name: "SOS",
+            segment_type: "Scan",
+            description: "Start of Scan",
+        },
+    );
+    markers.insert(
+        0xC0,
+        MarkerInfo {
+            name: "SOF0",
+            segment_type: "Frame",
+            description: "Baseline DCT",
+        },
+    );
+    markers.insert(
+        0xC1,
+        MarkerInfo {
+            name: "SOF1",
+            segment_type: "Frame",
+            description: "Extended Sequential DCT",
+        },
+    );
+    markers.insert(
+        0xC2,
+        MarkerInfo {
+            name: "SOF2",
+            segment_type: "Frame",
+            description: "Progressive DCT",
+        },
+    );
+    markers.insert(
+        0xC3,
+        MarkerInfo {
+            name: "SOF3",
+            segment_type: "Frame",
+            description: "Lossless (sequential)",
+        },
+    );
+    markers.insert(
+        0xC4,
+        MarkerInfo {
+            name: "DHT",
+            segment_type: "Table",
+            description: "Huffman Table",
+        },
+    );
+    markers.insert(
+        0xC5,
+        MarkerInfo {
+            name: "SOF5",
+            segment_type: "Frame",
+            description: "Differential Sequential",
+        },
+    );
+    markers.insert(
+        0xC6,
+        MarkerInfo {
+            name: "SOF6",
+            segment_type: "Frame",
+            description: "Differential Progressive",
+        },
+    );
+    markers.insert(
+        0xC7,
+        MarkerInfo {
+            name: "SOF7",
+            segment_type: "Frame",
+            description: "Differential Lossless",
+        },
+    );
+    markers.insert(
+        0xC8,
+        MarkerInfo {
+            name: "SOF8",
+            segment_type: "Frame",
+            description: "Reserved (JPEG Extension)",
+        },
+    );
+    markers.insert(
+        0xC9,
+        MarkerInfo {
+            name: "SOF9",
+            segment_type: "Frame",
+            description: "Extended Sequential DCT, Differential",
+        },
+    );
+    markers.insert(
+        0xCA,
+        MarkerInfo {
+            name: "SOF10",
+            segment_type: "Frame",
+            description: "Progressive DCT, Differential",
+        },
+    );
+    markers.insert(
+        0xCB,
+        MarkerInfo {
+            name: "SOF11",
+            segment_type: "Frame",
+            description: "Lossless (Sequential), Differential",
+        },
+    );
+    markers.insert(
+        0xCC,
+        MarkerInfo {
+            name: "SOF12",
+            segment_type: "Frame",
+            description: "JPEG-LS",
+        },
+    );
+    markers.insert(
+        0xCD,
+        MarkerInfo {
+            name: "SOF13",
+            segment_type: "Frame",
+            description: "Reserved (JPEG Extension)",
+        },
+    );
+    markers.insert(
+        0xCE,
+        MarkerInfo {
+            name: "SOF14",
+            segment_type: "Frame",
+            description: "Reserved (JPEG Extension)",
+        },
+    );
+    markers.insert(
+        0xCF,
+        MarkerInfo {
+            name: "SOF15",
+            segment_type: "Frame",
+            description: "Reserved (JPEG Extension)",
+        },
+    );
+    markers.insert(
+        0xDB,
+        MarkerInfo {
+            name: "DQT",
+            segment_type: "Table",
+            description: "Quantization Table",
+        },
+    );
+    markers.insert(
+        0xDD,
+        MarkerInfo {
+            name: "DRI",
+            segment_type: "Restart",
+            description: "Restart Interval",
+        },
+    );
+    markers.insert(
+        0xFE,
+        MarkerInfo {
+            name: "COM",
+            segment_type: "Comment",
+            description: "Comment",
+        },
+    );
     for i in 0xE0..=0xEF {
-        markers.insert(i, MarkerInfo { name: Box::leak(format!("APP{}", i - 0xE0).into_boxed_str()), segment_type: "APP", description: "Application Segment" });
+        markers.insert(
+            i,
+            MarkerInfo {
+                name: Box::leak(format!("APP{}", i - 0xE0).into_boxed_str()),
+                segment_type: "APP",
+                description: "Application Segment",
+            },
+        );
     }
     markers
 }

@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
+
+## [0.9.3] – 2025-07-06
+
+### Changed
+- Full implementation of `--keepdate=3`: extracts timestamps from EXIF, XMP, and IPTC metadata when available (#1)
+- Refactored codebase into fully modular structure:
+  - Separated modules for `config`, `jpeg`, `write`, `log`, and `lib.rs`
+- Improved debug output and CLI option parsing
+- Enhanced `print_help()` to display version, build date, authors, license and repository link
+- Updated `README.md` to reflect the current project structure, purpose and usage
+
+### Added
+- Automatic build date and year injection via `build.rs`
+- `BUILD_DATE` and `BUILD_YEAR` now displayed dynamically during `--help`
+- New reusable config structure with global `CONFIG` (via `once_cell::Lazy`)
+
+### Fixed
+- Resolved all `clippy` warnings (e.g. regex in loop, collapsible if, needless borrow)
+
+---
+
 ## [0.9.2] – 2025-07-06
 ### Changed
 - Added XMP, EXIF and IPTC parsers for creation and modification times to allow setting file timestamps; all parsing is handled internally.

@@ -1,19 +1,16 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 
-use crate::build_marker_map;
 use crate::CONFIG;
 use crate::ParsedJpeg;
+use crate::build_marker_map;
 
 // LOGGING //
 
 pub fn write_log(content: &str) -> std::io::Result<()> {
     let path = CONFIG.lock().unwrap().log_path.clone();
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(file, "{}", content)?;
     Ok(())
 }
