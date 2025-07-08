@@ -1,7 +1,8 @@
-use once_cell::sync::Lazy;
 use std::env;
 use std::path::PathBuf;
-use std::sync::Mutex;
+
+use exifcopy::library::log::LogMode;
+use exifcopy::shared::settings::WriteSettings;
 
 include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 
@@ -10,25 +11,25 @@ include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
 #[derive(Debug, Clone)]
 pub struct Config {
     pub keep_date_mode: u8,
-    pub debug: bool,
     pub source_path: PathBuf,
     pub target_path: PathBuf,
     pub log_path: PathBuf,
+    pub log_mode: LogMode,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             keep_date_mode: 1,
-            debug: false,
             source_path: PathBuf::new(),
             target_path: PathBuf::new(),
             log_path: PathBuf::new(),
+            log_mode: LogMode::FileOnly,
         }
     }
 }
 
-pub static CONFIG: Lazy<Mutex<Config>> = Lazy::new(|| Mutex::new(Config::default()));
+//pub static CONFIG: Lazy<Mutex<Config>> = Lazy::new(|| Mutex::new(Config::default()));
 
 pub struct ArgumentDefinition {
     pub name: &'static str,
@@ -39,10 +40,10 @@ pub struct ArgumentDefinition {
 
 const ARG_DEFINITIONS: &[ArgumentDefinition] = &[
     ArgumentDefinition {
-        name: "--debug",
-        alias: "-d",
-        takes_value: false,
-        description: "Enable debug output",
+        name: "--log",
+        alias: "-l",
+        takes_value: true,
+        description: "Log output: none, file, console, both (default: file)",
     },
     ArgumentDefinition {
         name: "--help",
@@ -86,10 +87,6 @@ pub fn parse_arguments() -> Result<Config, String> {
                 }
             }
 
-            if def.name == "--debug" {
-                config.debug = true;
-            }
-
             if def.name == "--keepdate" {
                 let val = if let Some(eq_pos) = arg.find('=') {
                     &arg[eq_pos + 1..]
@@ -107,7 +104,33 @@ pub fn parse_arguments() -> Result<Config, String> {
                 }
             }
 
-            if def.takes_value && !arg.contains('=') && def.name != "--keepdate" {
+            if def.name == "--log" {
+                let val = if let Some(eq_pos) = arg.find('=') {
+                    &arg[eq_pos + 1..]
+                } else if i + 1 < args.len() {
+                    i += 1;
+                    &args[i]
+                } else {
+                    return Err("Missing value for --log".into());
+                };
+                config.log_mode = match val.to_lowercase().as_str() {
+                    "none" => LogMode::None,
+                    "console" => LogMode::Console,
+                    "both" => LogMode::Both,
+                    "file" => LogMode::FileOnly,
+                    _ => {
+                        return Err(
+                            "Invalid value for --log (use: none, file, console, both)".into()
+                        );
+                    }
+                };
+            }
+
+            if def.takes_value
+                && !arg.contains('=')
+                && def.name != "--keepdate"
+                && def.name != "--log"
+            {
                 i += 1;
             }
         } else if arg.starts_with("-") {
@@ -131,8 +154,6 @@ pub fn parse_arguments() -> Result<Config, String> {
         path
     };
 
-    *CONFIG.lock().unwrap() = config.clone();
-
     Ok(config)
 }
 
@@ -143,7 +164,12 @@ pub fn print_help() {
         env!("CARGO_PKG_VERSION"),
         BUILD_DATE,
     );
-    println!("© {} {} - Licensed under {}\n", BUILD_YEAR, env!("CARGO_PKG_AUTHORS"), env!("CARGO_PKG_LICENSE"));
+    println!(
+        "© {} {} - Licensed under {}\n",
+        BUILD_YEAR,
+        env!("CARGO_PKG_AUTHORS"),
+        env!("CARGO_PKG_LICENSE")
+    );
     println!("{}", env!("CARGO_PKG_REPOSITORY"));
 
     println!("Usage:");
@@ -155,6 +181,13 @@ pub fn print_help() {
     }
 }
 
-pub fn is_debug() -> bool {
-    CONFIG.lock().unwrap().debug
+impl Config {
+    pub fn to_write_settings(&self) -> WriteSettings {
+        WriteSettings {
+            keepdate: self.keep_date_mode,
+            debug: matches!(self.log_mode, LogMode::FileOnly),
+            log_mode: self.log_mode,
+            log_path: self.log_path.clone(),
+        }
+    }
 }

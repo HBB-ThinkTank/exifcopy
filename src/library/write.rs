@@ -14,9 +14,9 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::core::PCWSTR;
 
-use crate::CONFIG;
 use crate::ParsedJpeg;
-use crate::log_parsed_segments;
+use crate::WriteSettings;
+use crate::build_marker_map;
 use crate::parse_jpeg_segments_default;
 use crate::write_log;
 
@@ -35,13 +35,10 @@ impl WindowsFileTime for FileTime {
 }
 
 pub fn inject_metadata_segments<P: AsRef<Path>>(
+    settings: &WriteSettings,
     target_path: P,
     source: &ParsedJpeg,
 ) -> std::io::Result<()> {
-    let debug_mode = {
-        let config = CONFIG.lock().unwrap();
-        config.debug
-    };
     let parsed_target = parse_jpeg_segments_default(&target_path)?;
 
     let target_path_ref = target_path.as_ref();
@@ -51,9 +48,9 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
         .create(true)
         .open(target_path_ref)?;
 
-    if debug_mode {
-        let _ = write_log("Segmente der ursprünglichen Zieldatei:");
-        if let Err(e) = log_parsed_segments(&parsed_target) {
+    if settings.debug {
+        let _ = write_log(settings, "Segmente der ursprünglichen Zieldatei:");
+        if let Err(e) = log_parsed_segments(settings, &parsed_target) {
             eprintln!("[ERROR] Log failed: {}", e);
         }
     }
@@ -104,16 +101,16 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
         output.write_all(&[0xFF, 0xD9])?;
     }
 
-    if debug_mode {
+    if settings.debug {
         // ▲❗ Logging nach finalem Schreiben der Datei
         let parsed_target_final = parse_jpeg_segments_default(&target_path)?;
-        let _ = write_log("Segmente der fertig geschriebenen Zieldatei:");
-        if let Err(e) = log_parsed_segments(&parsed_target_final) {
+        let _ = write_log(settings, "Segmente der fertig geschriebenen Zieldatei:");
+        if let Err(e) = log_parsed_segments(settings, &parsed_target_final) {
             eprintln!("[ERROR] Log failed: {}", e);
         }
     }
 
-    if let Err(e) = restore_file_times(target_path_ref, &parsed_target, source) {
+    if let Err(e) = restore_file_times(settings, target_path_ref, &parsed_target, source) {
         eprintln!(
             "[WARN] Datei-Zeitstempel konnten nicht gesetzt werden: {}",
             e
@@ -124,15 +121,41 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
     Ok(())
 }
 
+pub fn log_parsed_segments(settings: &WriteSettings, source: &ParsedJpeg) -> std::io::Result<()> {
+    let mut log_output = String::new();
+    log_output.push_str("Marker  | Name     | Beschreibung                         | Länge\n");
+    log_output.push_str("--------|----------|--------------------------------------|------\n");
+
+    for segment in &source.segments {
+        if let Some(info) = build_marker_map().get(&segment.marker) {
+            log_output.push_str(&format!(
+                "0xFF{:02X} | {:<8} | {:<36} | {}\n",
+                segment.marker,
+                info.name,
+                info.description,
+                segment.data.len()
+            ));
+        } else {
+            log_output.push_str(&format!(
+                "0xFF{:02X} | {:<8} | {:<36} | {}\n",
+                segment.marker,
+                "UNKNOWN",
+                "Unbekanntes Segment",
+                segment.data.len()
+            ));
+        }
+    }
+
+    write_log(settings, &log_output)
+}
+
 fn restore_file_times(
+    settings: &WriteSettings,
     target_path: &Path,
     target_meta: &ParsedJpeg,
     source_meta: &ParsedJpeg,
 ) -> std::io::Result<()> {
-    let mode = {
-        let config = CONFIG.lock().unwrap();
-        config.keep_date_mode
-    };
+    let mode = settings.keepdate;
 
     if mode == 0 {
         return Ok(());
@@ -152,23 +175,29 @@ fn restore_file_times(
         // FileCreate, FileModify kommen aus den Metadaten (EXIF/XMP/IPTC etc.) - aber noch nicht umgesetzt
         3 => {
             // ▲❗ Metadatenbasierte Zeitübernahme (keepdate = 3)
-            let (meta_ctime, meta_mtime) = extract_metadata_dates(source_meta);
+            let (meta_ctime, meta_mtime) = extract_metadata_dates(settings, source_meta);
 
-            if CONFIG.lock().unwrap().debug {
-                let _ = write_log("[DEBUG] Ausgewertete Metadaten-Zeitstempel (keepdate=3):");
-                let _ = write_log(&format!(
-                    "  Create: {:?} ({})
+            if settings.debug {
+                let _ = write_log(
+                    settings,
+                    "[DEBUG] Ausgewertete Metadaten-Zeitstempel (keepdate=3):",
+                );
+                let _ = write_log(
+                    settings,
+                    &format!(
+                        "  Create: {:?} ({})
 					  Modify: {:?} ({})
 					",
-                    meta_ctime,
-                    meta_ctime
-                        .map(|ft| fmt_filetime(&ft))
-                        .unwrap_or_else(|| "-".into()),
-                    meta_mtime,
-                    meta_mtime
-                        .map(|ft| fmt_filetime(&ft))
-                        .unwrap_or_else(|| "-".into())
-                ));
+                        meta_ctime,
+                        meta_ctime
+                            .map(|ft| fmt_filetime(&ft))
+                            .unwrap_or_else(|| "-".into()),
+                        meta_mtime,
+                        meta_mtime
+                            .map(|ft| fmt_filetime(&ft))
+                            .unwrap_or_else(|| "-".into())
+                    ),
+                );
             }
 
             match (meta_ctime, meta_mtime) {
@@ -176,8 +205,9 @@ fn restore_file_times(
                 (Some(c), None) => (c, c),
                 (None, Some(m)) => (m, m),
                 (None, None) => {
-                    if CONFIG.lock().unwrap().debug {
+                    if settings.debug {
                         let _ = write_log(
+                            settings,
                             "[WARN] Keine gültigen Metadaten-Zeitstempel gefunden, Fallback auf keepdate=2",
                         );
                     }
@@ -198,7 +228,10 @@ fn restore_file_times(
     Ok(())
 }
 
-fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTime>) {
+fn extract_metadata_dates(
+    settings: &WriteSettings,
+    jpeg: &ParsedJpeg,
+) -> (Option<FileTime>, Option<FileTime>) {
     // ▲❗ Neue Version: basiert auf Segmenten mit metadata_type
     let mut create = None;
     let mut modify = None;
@@ -209,9 +242,7 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
     .unwrap();
 
     for segment in &jpeg.segments {
-        if CONFIG.lock().unwrap().debug
-            && (segment.marker_name == "APP1" || segment.marker_name == "APP13")
-        {
+        if settings.debug && (segment.marker_name == "APP1" || segment.marker_name == "APP13") {
             if let Some(ref mtype) = segment.metadata_type {
                 if mtype == "XMP" || mtype == "EXIF" || mtype == "IPTC" {
                     let header = format!(
@@ -229,8 +260,8 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
                         .replace('\r', "")
                         .replace('\t', "⇥");
 
-                    let _ = write_log(&header);
-                    let _ = write_log(&format!("{}\n", as_text));
+                    let _ = write_log(settings, &header);
+                    let _ = write_log(settings, &format!("{}\n", as_text));
                 }
             }
         }
@@ -239,22 +270,27 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
             // XMP-Parser
             if mtype == "XMP" {
                 if let Ok(xml) = std::str::from_utf8(&segment.data) {
-                    if CONFIG.lock().unwrap().debug {
-                        let _ = write_log("[DEBUG] XMP full segment content:");
-                        let _ = write_log(xml);
+                    if settings.debug {
+                        let _ = write_log(settings, "[DEBUG] XMP full segment content:");
+                        let _ = write_log(settings, xml);
                     }
 
                     for cap in re_xmp_any.captures_iter(xml) {
                         let ns = cap.get(1).map_or("", |m| m.as_str()); // z. B. "xmp:" oder ""
                         let tag = &cap[2]; // z. B. "CreateDate"
                         let value = &cap[3];
-                        if CONFIG.lock().unwrap().debug {
-                            let _ =
-                                write_log(&format!("[DEBUG] Matched {}:{} = {}", ns, tag, value));
-                            let _ = write_log(&format!(
-                                "[DEBUG] Parsing value for {}{} → raw = {:?}",
-                                ns, tag, value
-                            ));
+                        if settings.debug {
+                            let _ = write_log(
+                                settings,
+                                &format!("[DEBUG] Matched {}:{} = {}", ns, tag, value),
+                            );
+                            let _ = write_log(
+                                settings,
+                                &format!(
+                                    "[DEBUG] Parsing value for {}{} → raw = {:?}",
+                                    ns, tag, value
+                                ),
+                            );
                         }
                         let mut parsed_dt = DateTime::parse_from_rfc3339(value)
                             .or_else(|_| DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f"))
@@ -267,45 +303,52 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
                         }
                         if let Ok(dt) = parsed_dt {
                             let ft = FileTime::from_unix_time(dt.timestamp(), 0);
-                            if CONFIG.lock().unwrap().debug {
-                                let _ = write_log(&format!(
-                                    "[DEBUG] Umgewandelt zu DateTime = {:?}",
-                                    dt
-                                ));
-                                let _ = write_log(&format!(
-                                    "[DEBUG] Umgewandelt zu FileTime = {:?}",
-                                    ft
-                                ));
+                            if settings.debug {
+                                let _ = write_log(
+                                    settings,
+                                    &format!("[DEBUG] Umgewandelt zu DateTime = {:?}", dt),
+                                );
+                                let _ = write_log(
+                                    settings,
+                                    &format!("[DEBUG] Umgewandelt zu FileTime = {:?}", ft),
+                                );
                             }
                             let tag_lc = tag.to_ascii_lowercase();
                             match tag_lc.as_str() {
                                 // ▲❗ xmp:-Präfix wird bevorzugt behandelt
                                 "createdate" | "datecreated" => {
-                                    let _ =
-                                        write_log(&format!("[DEBUG] Create Namespace: '{}'", ns));
+                                    let _ = write_log(
+                                        settings,
+                                        &format!("[DEBUG] Create Namespace: '{}'", ns),
+                                    );
                                     if ns == "xmp:" || create.is_none() {
                                         create = Some(ft);
-                                        let _ = write_log(&format!(
-                                            "[DEBUG] Setze create = {:?}",
-                                            create
-                                        ));
+                                        let _ = write_log(
+                                            settings,
+                                            &format!("[DEBUG] Setze create = {:?}", create),
+                                        );
                                     } else {
-                                        let _ = write_log(&format!(
-                                            "[DEBUG] Verwerfe {}:{} (create bereits gesetzt)",
-                                            ns, tag
-                                        ));
+                                        let _ = write_log(
+                                            settings,
+                                            &format!(
+                                                "[DEBUG] Verwerfe {}:{} (create bereits gesetzt)",
+                                                ns, tag
+                                            ),
+                                        );
                                     }
                                 }
                                 "modifydate" | "datemodified" => {
-                                    let _ =
-                                        write_log(&format!("[DEBUG] Modify Namespace: '{}'", ns));
+                                    let _ = write_log(
+                                        settings,
+                                        &format!("[DEBUG] Modify Namespace: '{}'", ns),
+                                    );
                                     if ns == "xmp:" || modify.is_none() {
                                         modify = Some(ft);
-                                        if CONFIG.lock().unwrap().debug {
-                                            let _ = write_log(&format!(
-                                                "[DEBUG] Setze modify = {:?}",
-                                                modify
-                                            ));
+                                        if settings.debug {
+                                            let _ = write_log(
+                                                settings,
+                                                &format!("[DEBUG] Setze modify = {:?}", modify),
+                                            );
                                         }
                                     }
                                 }
@@ -318,17 +361,18 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
 
             // EXIF-Parser
             if mtype == "EXIF" {
-                if CONFIG.lock().unwrap().debug {
-                    let _ = write_log("[DEBUG] EXIF-Segment erkannt, beginne Analyse...");
+                if settings.debug {
+                    let _ = write_log(settings, "[DEBUG] EXIF-Segment erkannt, beginne Analyse...");
                 }
                 let (createdate_opt, modifydate_opt) =
-                    parse_exif_segment_for_timestamps(&segment.data);
+                    parse_exif_segment_for_timestamps(settings, &segment.data);
 
                 if create.is_none() {
                     if let Some(createdate_val) = createdate_opt {
                         create = Some(createdate_val);
-                        if CONFIG.lock().unwrap().debug {
-                            let _ = write_log("[DEBUG] Create aus Direktparser übernommen");
+                        if settings.debug {
+                            let _ =
+                                write_log(settings, "[DEBUG] Create aus Direktparser übernommen");
                         }
                     }
                 }
@@ -336,8 +380,9 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
                 if modify.is_none() {
                     if let Some(modifydate_val) = modifydate_opt {
                         modify = Some(modifydate_val);
-                        if CONFIG.lock().unwrap().debug {
-                            let _ = write_log("[DEBUG] Modify aus Direktparser übernommen");
+                        if settings.debug {
+                            let _ =
+                                write_log(settings, "[DEBUG] Modify aus Direktparser übernommen");
                         }
                     }
                 }
@@ -345,38 +390,39 @@ fn extract_metadata_dates(jpeg: &ParsedJpeg) -> (Option<FileTime>, Option<FileTi
 
             // IPTC
             if mtype == "IPTC" {
-                if CONFIG.lock().unwrap().debug {
-                    let _ = write_log("[DEBUG] IPTC-Segment erkannt, beginne Analyse...");
+                if settings.debug {
+                    let _ = write_log(settings, "[DEBUG] IPTC-Segment erkannt, beginne Analyse...");
 
                     /*/ Schreibe IPTC-Daten in Datei
                     let mut file = match File::create("iptc_segment_dump.bin") {
                         Ok(f) => f,
                         Err(e) => {
-                            let _ = write_log(&format!("[DEBUG] Fehler beim Erstellen von iptc_segment_dump.bin: {}", e));
+                            let _ = write_log(settings, &format!("[DEBUG] Fehler beim Erstellen von iptc_segment_dump.bin: {}", e));
                             return (create, modify);
                         }
                     };
 
                     if let Err(e) = file.write_all(&segment.data) {
-                        let _ = write_log(&format!("[DEBUG] Fehler beim Schreiben von iptc_segment_dump.bin: {}", e));
+                        let _ = write_log(settings, &format!("[DEBUG] Fehler beim Schreiben von iptc_segment_dump.bin: {}", e));
                     } else {
-                        let _ = write_log("[DEBUG] IPTC-Segment wurde in iptc_segment_dump.bin gespeichert.");
+                        let _ = write_log(settings, "[DEBUG] IPTC-Segment wurde in iptc_segment_dump.bin gespeichert.");
                     }*/
                 }
 
-                let (iptc_create, iptc_modify) = parse_iptc_segment_for_timestamps(&segment.data);
+                let (iptc_create, iptc_modify) =
+                    parse_iptc_segment_for_timestamps(settings, &segment.data);
 
                 if create.is_none() {
                     create = iptc_create;
-                    if CONFIG.lock().unwrap().debug {
-                        let _ = write_log("[DEBUG] Create aus IPTC übernommen");
+                    if settings.debug {
+                        let _ = write_log(settings, "[DEBUG] Create aus IPTC übernommen");
                     }
                 }
 
                 if modify.is_none() {
                     modify = iptc_modify;
-                    if CONFIG.lock().unwrap().debug {
-                        let _ = write_log("[DEBUG] Modify aus IPTC übernommen");
+                    if settings.debug {
+                        let _ = write_log(settings, "[DEBUG] Modify aus IPTC übernommen");
                     }
                 }
             }
@@ -436,40 +482,41 @@ fn set_creation_time_windows(path: &Path, ctime: FileTime) {
 }
 
 /// Parsed EXIF-Timestamps from EXIF segment (raw EXIF data, without 6-byte header)
-fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<FileTime>) {
-    let debug_mode = {
-        let config = CONFIG.lock().unwrap();
-        config.debug
-    };
-
+fn parse_exif_segment_for_timestamps(
+    settings: &WriteSettings,
+    data: &[u8],
+) -> (Option<FileTime>, Option<FileTime>) {
     let exif = &data[6..];
     if exif.len() < 10 {
-        if debug_mode {
-            let _ = write_log("[DEBUG] Segment zu kurz für EXIF-Auswertung.");
+        if settings.debug {
+            let _ = write_log(settings, "[DEBUG] Segment zu kurz für EXIF-Auswertung.");
         }
         return (None, None);
     }
 
-    if debug_mode {
-        let _ = write_log(&format!("[DEBUG] Length of Exif-Segment: {}", exif.len()));
+    if settings.debug {
+        let _ = write_log(
+            settings,
+            &format!("[DEBUG] Length of Exif-Segment: {}", exif.len()),
+        );
     }
 
     let is_le = match &exif[0..2] {
         b"II" => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] Byte Order: Little Endian");
+            if settings.debug {
+                let _ = write_log(settings, "[DEBUG] Byte Order: Little Endian");
             }
             true
         }
         b"MM" => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] Byte Order: Big Endian");
+            if settings.debug {
+                let _ = write_log(settings, "[DEBUG] Byte Order: Big Endian");
             }
             false
         }
         _ => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] Unbekannte Byte Order");
+            if settings.debug {
+                let _ = write_log(settings, "[DEBUG] Unbekannte Byte Order");
             }
             return (None, None);
         }
@@ -496,19 +543,22 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
     }
 
     if let Some(tiff_tag) = read_u16(exif, 2, is_le) {
-        if tiff_tag != 0x002A && debug_mode {
-            let _ = write_log("[DEBUG] Kein TIFF-Tag (0x002A), versuche trotzdem zu parsen.");
+        if tiff_tag != 0x002A && settings.debug {
+            let _ = write_log(
+                settings,
+                "[DEBUG] Kein TIFF-Tag (0x002A), versuche trotzdem zu parsen.",
+            );
         }
     } else {
-        let _ = write_log("[DEBUG] TIFF-Tag konnte nicht gelesen werden.");
+        let _ = write_log(settings, "[DEBUG] TIFF-Tag konnte nicht gelesen werden.");
         return (None, None);
     }
 
     let ifd0_offset = match read_u32(exif, 4, is_le) {
         Some(v) => v as usize,
         None => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] IFD0-Offset konnte nicht gelesen werden.");
+            if settings.debug {
+                let _ = write_log(settings, "[DEBUG] IFD0-Offset konnte nicht gelesen werden.");
             }
             return (None, None);
         }
@@ -517,15 +567,21 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
     let ifd0_count = match read_u16(exif, ifd0_offset, is_le) {
         Some(v) => v as usize,
         None => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] Anzahl der IFD0-Tags konnte nicht gelesen werden.");
+            if settings.debug {
+                let _ = write_log(
+                    settings,
+                    "[DEBUG] Anzahl der IFD0-Tags konnte nicht gelesen werden.",
+                );
             }
             return (None, None);
         }
     };
 
-    if debug_mode {
-        let _ = write_log(&format!("[DEBUG] Anzahl der IFD0-Tags: {}", ifd0_count));
+    if settings.debug {
+        let _ = write_log(
+            settings,
+            &format!("[DEBUG] Anzahl der IFD0-Tags: {}", ifd0_count),
+        );
     }
 
     let mut tag_map: HashMap<u16, String> = HashMap::new();
@@ -539,19 +595,25 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
             None => continue,
         };
 
-        if debug_mode {
+        if settings.debug {
             let offset_raw = read_u32(exif, base + 8, is_le).unwrap_or(0);
-            let _ = write_log(&format!(
-                "[DEBUG] IFD0-Tag-ID {:04X} at offset {} → offset/value field: {}",
-                tag, base, offset_raw
-            ));
+            let _ = write_log(
+                settings,
+                &format!(
+                    "[DEBUG] IFD0-Tag-ID {:04X} at offset {} → offset/value field: {}",
+                    tag, base, offset_raw
+                ),
+            );
         }
 
         if tag == 0x8769 {
             if let Some(offset) = read_u32(exif, base + 8, is_le) {
                 exif_ifd_offset = Some(offset as usize);
-                if debug_mode {
-                    let _ = write_log(&format!("[DEBUG] EXIF-IFD Offset gefunden: {}", offset));
+                if settings.debug {
+                    let _ = write_log(
+                        settings,
+                        &format!("[DEBUG] EXIF-IFD Offset gefunden: {}", offset),
+                    );
                 }
             }
             continue;
@@ -582,12 +644,15 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
                     }
                 };
                 if let Ok(s) = str::from_utf8(string_bytes) {
-                    if debug_mode {
-                        let _ = write_log(&format!(
-                            "[DEBUG] IFD0-Tag {:04X} = '{}'",
-                            tag,
-                            s.trim_end_matches('\0')
-                        ));
+                    if settings.debug {
+                        let _ = write_log(
+                            settings,
+                            &format!(
+                                "[DEBUG] IFD0-Tag {:04X} = '{}'",
+                                tag,
+                                s.trim_end_matches('\0')
+                            ),
+                        );
                     }
                     tag_map.insert(tag, s.trim_end_matches('\0').to_string());
                 }
@@ -599,15 +664,21 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
         let exif_count = match read_u16(exif, eoff, is_le) {
             Some(v) => v as usize,
             None => {
-                if debug_mode {
-                    let _ = write_log("[DEBUG] Anzahl der EXIF-Tags konnte nicht gelesen werden.");
+                if settings.debug {
+                    let _ = write_log(
+                        settings,
+                        "[DEBUG] Anzahl der EXIF-Tags konnte nicht gelesen werden.",
+                    );
                 }
                 return (None, None);
             }
         };
 
-        if debug_mode {
-            let _ = write_log(&format!("[DEBUG] Anzahl der EXIF-Tags: {}", exif_count));
+        if settings.debug {
+            let _ = write_log(
+                settings,
+                &format!("[DEBUG] Anzahl der EXIF-Tags: {}", exif_count),
+            );
         }
 
         for i in 0..exif_count {
@@ -617,12 +688,15 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
                 None => continue,
             };
 
-            if debug_mode {
+            if settings.debug {
                 let offset_raw = read_u32(exif, base + 8, is_le).unwrap_or(0);
-                let _ = write_log(&format!(
-                    "[DEBUG] ExifIFD-Tag-ID {:04X} at offset {} → offset/value field: {}",
-                    tag, base, offset_raw
-                ));
+                let _ = write_log(
+                    settings,
+                    &format!(
+                        "[DEBUG] ExifIFD-Tag-ID {:04X} at offset {} → offset/value field: {}",
+                        tag, base, offset_raw
+                    ),
+                );
             }
 
             if target_tags.contains(&tag) {
@@ -650,12 +724,15 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
                         }
                     };
                     if let Ok(s) = str::from_utf8(string_bytes) {
-                        if debug_mode {
-                            let _ = write_log(&format!(
-                                "[DEBUG] EXIF-Tag {:04X} = '{}'",
-                                tag,
-                                s.trim_end_matches('\0')
-                            ));
+                        if settings.debug {
+                            let _ = write_log(
+                                settings,
+                                &format!(
+                                    "[DEBUG] EXIF-Tag {:04X} = '{}'",
+                                    tag,
+                                    s.trim_end_matches('\0')
+                                ),
+                            );
                         }
                         tag_map.insert(tag, s.trim_end_matches('\0').to_string());
                     }
@@ -671,24 +748,36 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
     let offsettimedigitized = tag_map.get(&0x9012);
     let offsetmodifydate = tag_map.get(&0x9010);
 
-    if debug_mode {
+    if settings.debug {
         if let Some(s) = datetimeoriginal {
-            let _ = write_log(&format!("[DEBUG] Tag 9003 DateTimeOriginal = '{}'", s));
+            let _ = write_log(
+                settings,
+                &format!("[DEBUG] Tag 9003 DateTimeOriginal = '{}'", s),
+            );
         }
         if let Some(s) = datetimedigitized {
-            let _ = write_log(&format!("[DEBUG] Tag 9004 DateTimeDigitized = '{}'", s));
+            let _ = write_log(
+                settings,
+                &format!("[DEBUG] Tag 9004 DateTimeDigitized = '{}'", s),
+            );
         }
         if let Some(s) = modifydate {
-            let _ = write_log(&format!("[DEBUG] Tag 0132 ModifyDate = '{}'", s));
+            let _ = write_log(settings, &format!("[DEBUG] Tag 0132 ModifyDate = '{}'", s));
         }
         if let Some(s) = offsettimeoriginal {
-            let _ = write_log(&format!("[DEBUG] Tag 9011 OffsetTimeOriginal = '{}'", s));
+            let _ = write_log(
+                settings,
+                &format!("[DEBUG] Tag 9011 OffsetTimeOriginal = '{}'", s),
+            );
         }
         if let Some(s) = offsettimedigitized {
-            let _ = write_log(&format!("[DEBUG] Tag 9012 OffsetTimeDigitized = '{}'", s));
+            let _ = write_log(
+                settings,
+                &format!("[DEBUG] Tag 9012 OffsetTimeDigitized = '{}'", s),
+            );
         }
         if let Some(s) = offsetmodifydate {
-            let _ = write_log(&format!("[DEBUG] Tag 9010 OffsetTime = '{}'", s));
+            let _ = write_log(settings, &format!("[DEBUG] Tag 9010 OffsetTime = '{}'", s));
         }
     }
 
@@ -700,8 +789,8 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
     let createdate_str = match raw_createdate {
         Some(s) => s,
         None => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] Kein CreateDate gefunden.");
+            if settings.debug {
+                let _ = write_log(settings, "[DEBUG] Kein CreateDate gefunden.");
             }
             "<none>"
         }
@@ -709,8 +798,8 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
     let modifydate_str = match raw_modifydate {
         Some(s) => s,
         None => {
-            if debug_mode {
-                let _ = write_log("[DEBUG] Kein ModifyDate gefunden.");
+            if settings.debug {
+                let _ = write_log(settings, "[DEBUG] Kein ModifyDate gefunden.");
             }
             "<none>"
         }
@@ -736,16 +825,22 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
         })
         .map_or("+00:00", |v| v.as_str());
 
-    if debug_mode {
-        let _ = write_log(&format!(
-            "[DEBUG] Raw Create: {}{}",
-            createdate_str, final_offset_create
-        ));
+    if settings.debug {
+        let _ = write_log(
+            settings,
+            &format!(
+                "[DEBUG] Raw Create: {}{}",
+                createdate_str, final_offset_create
+            ),
+        );
 
-        let _ = write_log(&format!(
-            "[DEBUG] Raw Modify: {}{}",
-            modifydate_str, final_offset_modify
-        ));
+        let _ = write_log(
+            settings,
+            &format!(
+                "[DEBUG] Raw Modify: {}{}",
+                modifydate_str, final_offset_modify
+            ),
+        );
     }
 
     fn parse_datetime_with_offset(dt: &str, offset: &str) -> Option<FileTime> {
@@ -761,7 +856,10 @@ fn parse_exif_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
     (createdate, modifydate)
 }
 
-fn parse_iptc_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<FileTime>) {
+fn parse_iptc_segment_for_timestamps(
+    settings: &WriteSettings,
+    data: &[u8],
+) -> (Option<FileTime>, Option<FileTime>) {
     let mut create_date: Option<String> = None;
     let mut create_time: Option<String> = None;
     let mut digital_date: Option<String> = None;
@@ -783,11 +881,11 @@ fn parse_iptc_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
             let content_bytes = &data[i..i + len];
             let content = String::from_utf8_lossy(content_bytes).to_string();
 
-            if CONFIG.lock().unwrap().debug {
-                let _ = write_log(&format!(
-                    "[DEBUG] IPTC Dataset {:02X} = {:?}",
-                    dataset, content
-                ));
+            if settings.debug {
+                let _ = write_log(
+                    settings,
+                    &format!("[DEBUG] IPTC Dataset {:02X} = {:?}", dataset, content),
+                );
             }
 
             match dataset {
@@ -828,9 +926,15 @@ fn parse_iptc_segment_for_timestamps(data: &[u8]) -> (Option<FileTime>, Option<F
 
     let modified = make_filetime(modify_date, modify_time);
 
-    if CONFIG.lock().unwrap().debug {
-        let _ = write_log(&format!("[DEBUG] IPTC final Create: {:?}", created));
-        let _ = write_log(&format!("[DEBUG] IPTC final Modify: {:?}", modified));
+    if settings.debug {
+        let _ = write_log(
+            settings,
+            &format!("[DEBUG] IPTC final Create: {:?}", created),
+        );
+        let _ = write_log(
+            settings,
+            &format!("[DEBUG] IPTC final Modify: {:?}", modified),
+        );
     }
 
     (created, modified)

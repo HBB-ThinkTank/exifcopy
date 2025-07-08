@@ -5,6 +5,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] - 2025-07-08
+
+### Internal Changes
+- Refactored module structure: split into `library`, `shared`, and local `config`
+- Preparing library usage
+- Removed unused static `CONFIG`
+- Eliminated dead code (`get_log_mode`, unused `pub use`)
+- Replaced unnecessary `.clone()` and `&` references (Clippy suggestions)
+- Confirmed clean state with `cargo fmt` and `cargo clippy`
+
 ## [0.9.3] – 2025-07-06
 
 ### Changed

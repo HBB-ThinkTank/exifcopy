@@ -1,27 +1,31 @@
+mod config;
+
 // CONFIGURATION //
-use exifcopy::{CONFIG, parse_arguments, print_help};
+use config::{parse_arguments, print_help};
 
 // // PARSING THE SOURCE JPEG // //
 use exifcopy::parse_jpeg_segments;
 
 // LOGGING //
 
-use exifcopy::{log_parsed_segments, write_log};
+use exifcopy::library::log::LogMode;
+use exifcopy::library::log::init_logging;
+use exifcopy::write_log;
 
 // COPYING THE DATA FROM SOURCE AND WRITING THE TARGET //
 
-use exifcopy::inject_metadata_segments;
-
-use std::clone::Clone;
+use exifcopy::{inject_metadata_segments, log_parsed_segments};
 
 pub fn main() {
     match parse_arguments() {
         Ok(config) => {
-            if config.debug {
+            let write_settings = config.to_write_settings();
+
+            init_logging(write_settings.log_mode, Some(&write_settings.log_path));
+
+            if write_settings.log_mode == LogMode::FileOnly {
                 println!("[DEBUG] Configuration: {:?}", config);
             }
-
-            *CONFIG.lock().unwrap() = config.clone(); // ▲❗ Konfiguration global speichern
 
             let source_path = &config.source_path;
             let target_path = &config.target_path;
@@ -29,14 +33,16 @@ pub fn main() {
             match parse_jpeg_segments(source_path, false) {
                 Ok(parsed_source) => {
                     // Nur im Debug-Modus: Schreiben der gefundenen Segmente der Quelldatei
-                    let _ = write_log("Segmente der Quelldatei:");
-                    if CONFIG.lock().unwrap().debug {
-                        if let Err(e) = log_parsed_segments(&parsed_source) {
+                    let _ = write_log(&write_settings, "Segmente der Quelldatei:");
+                    if write_settings.log_mode == LogMode::FileOnly {
+                        if let Err(e) = log_parsed_segments(&write_settings, &parsed_source) {
                             eprintln!("[ERROR] Log failed: {}", e);
                         }
                     }
 
-                    if let Err(e) = inject_metadata_segments(target_path, &parsed_source) {
+                    if let Err(e) =
+                        inject_metadata_segments(&write_settings, target_path, &parsed_source)
+                    {
                         eprintln!("[ERROR] {}", e);
                         std::process::exit(1);
                     }

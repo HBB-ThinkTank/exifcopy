@@ -1,22 +1,25 @@
-// CONFIGURATION //
+// SHARED //
 
-pub mod config;
-pub use config::{CONFIG, parse_arguments, print_help};
+pub mod shared;
+pub use shared::settings::WriteSettings;
+
+pub mod library {
+    pub mod jpeg;
+    pub mod log;
+    pub mod write;
+}
 
 // PARSING THE SOURCE JPEG //
 
-pub mod jpeg;
-pub use jpeg::{JpegSegment, MarkerInfo, ParsedJpeg};
-pub use jpeg::{
+pub use library::jpeg::{JpegSegment, MarkerInfo, ParsedJpeg};
+pub use library::jpeg::{
     build_marker_map, identify_metadata_type, parse_jpeg_segments, parse_jpeg_segments_default,
 };
 
 // LOGGING //
 
-pub mod log;
-pub use log::{log_parsed_segments, write_log};
+pub use library::log::write_log;
 
 // COPYING THE DATA FROM SOURCE AND WRITING THE TARGET //
 
-pub mod write;
-pub use write::inject_metadata_segments;
+pub use library::write::{inject_metadata_segments, log_parsed_segments};
