@@ -1,12 +1,13 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use clap::ValueEnum;
 
 use crate::WriteSettings;
 use log::{LevelFilter, info};
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode, WriteLogger};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum LogMode {
     None,
     Console,
@@ -52,8 +53,6 @@ pub fn write_log(settings: &WriteSettings, msg: &str) -> std::io::Result<()> {
         LogMode::None => return Ok(()),
         LogMode::Console => println!("{}", msg),
         LogMode::FileOnly | LogMode::Both => {
-            //use std::fs::OpenOptions;
-            //use std::io::Write;
 
             let mut file = OpenOptions::new()
                 .create(true)

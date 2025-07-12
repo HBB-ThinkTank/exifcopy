@@ -34,75 +34,130 @@ impl WindowsFileTime for FileTime {
     }
 }
 
+/// Defines the behaviour of the segment writing process.
+pub enum InjectionMode {
+    /// Copies only metadata (APP/COM segments) from source into a separately parsed target.
+    CopyMetadata,
+    /// Writes all segments and scan data from the provided ParsedJpeg directly.
+    WriteFullJpeg,
+}
+
 pub fn inject_metadata_segments<P: AsRef<Path>>(
     settings: &WriteSettings,
     target_path: P,
+    mode: InjectionMode,
     source: &ParsedJpeg,
 ) -> std::io::Result<()> {
-    let parsed_target = parse_jpeg_segments_default(&target_path)?;
-
     let target_path_ref = target_path.as_ref();
+
+    // ⬛ Optional target parsing if we are in metadata injection mode
+    let parsed_target = match mode {
+        InjectionMode::CopyMetadata => Some(parse_jpeg_segments_default(&target_path)?),
+        InjectionMode::WriteFullJpeg => None,
+    };
+
+    // 📝 Optional logging before writing
+	match mode {
+        InjectionMode::CopyMetadata => {
+			if settings.debug {
+				if let Some(parsed) = &parsed_target {
+					let _ = write_log(settings, "Segmente der ursprünglichen Zieldatei:");
+					if let Err(e) = log_parsed_segments(settings, parsed) {
+						eprintln!("[ERROR] Log failed: {}", e);
+					}
+				}
+			}
+		}
+		InjectionMode::WriteFullJpeg => {
+			// Do nothing – mode does not use &parsed_target, so nothing to log
+		}
+	}
+
+    // 📄 Open output file
     let mut output = OpenOptions::new()
         .write(true)
         .truncate(true)
         .create(true)
         .open(target_path_ref)?;
 
-    if settings.debug {
-        let _ = write_log(settings, "Segmente der ursprünglichen Zieldatei:");
-        if let Err(e) = log_parsed_segments(settings, &parsed_target) {
-            eprintln!("[ERROR] Log failed: {}", e);
-        }
-    }
-
-    // Schreibe SOI Marker
+    // 🧷 Write SOI marker
     output.write_all(&[0xFF, 0xD8])?;
 
-    // Schreibe alle APP- und COM-Segmente aus der Quelldatei und nur diese
-    for segment in &source.segments {
-        if segment.marker_name.starts_with("APP") || segment.marker_name == "COM" {
-            let len = segment.data.len() + 2;
-            output.write_all(&[0xFF, segment.marker])?;
-            output.write_all(&(len as u16).to_be_bytes())?;
-            output.write_all(&segment.data)?;
+    match mode {
+        InjectionMode::CopyMetadata => {
+            // ✅ Write APP and COM segments from the source
+            for segment in &source.segments {
+                if segment.marker_name.starts_with("APP") || segment.marker_name == "COM" {
+                    let len = segment.data.len() + 2;
+                    output.write_all(&[0xFF, segment.marker])?;
+                    output.write_all(&(len as u16).to_be_bytes())?;
+                    output.write_all(&segment.data)?;
+                }
+            }
+
+            // 🔄 Write structural segments from parsed target (excluding metadata and SOS/EOI)
+            if let Some(parsed_target) = &parsed_target {
+                for segment in &parsed_target.segments {
+                    if segment.marker_name.starts_with("APP")
+                        || segment.marker_name == "COM"
+                        || segment.marker_name == "SOI"
+                        || segment.marker_name == "SOS"
+                        || segment.marker_name == "EOI"
+                    {
+                        continue;
+                    }
+                    let len = segment.data.len() + 2;
+                    output.write_all(&[0xFF, segment.marker])?;
+                    output.write_all(&(len as u16).to_be_bytes())?;
+                    output.write_all(&segment.data)?;
+                }
+
+                // 🎯 Write the SOS segment
+                for segment in &parsed_target.segments {
+                    if segment.marker_name == "SOS" {
+                        let len = segment.data.len() + 2;
+                        output.write_all(&[0xFF, segment.marker])?;
+                        output.write_all(&(len as u16).to_be_bytes())?;
+                        output.write_all(&segment.data)?;
+                    }
+                }
+
+                // 🖼 Write image scan data
+                output.write_all(&parsed_target.scan_data)?;
+
+                // 🛑 Ensure EOI marker is present
+                if !parsed_target.scan_data.ends_with(&[0xFF, 0xD9]) {
+                    output.write_all(&[0xFF, 0xD9])?;
+                }
+            }
+        }
+
+        InjectionMode::WriteFullJpeg => {
+            // 📦 Write all segments from the parsed source as-is
+            for segment in &source.segments {
+				if segment.marker_name != "SOI" && segment.marker_name != "EOI" {
+					let len = segment.data.len() + 2;
+					output.write_all(&[0xFF, segment.marker])?;
+					output.write_all(&(len as u16).to_be_bytes())?;
+					output.write_all(&segment.data)?;
+				}
+            }
+
+            // 🖼 Write image scan data
+                output.write_all(&source.scan_data)?;
+
+            // 🛑 Ensure EOI marker if needed
+			let has_eoi_segment = source.segments.iter().any(|s| s.marker_name == "EOI");
+			let has_eoi_in_scan = source.scan_data.ends_with(&[0xFF, 0xD9]);
+
+            if !has_eoi_segment && !has_eoi_in_scan {
+                output.write_all(&[0xFF, 0xD9])?;
+            }
         }
     }
 
-    // Schreibe alle Segmente aus der Zieldatei, aber nicht APP/COM/SOI/SOS/EOI
-    for segment in &parsed_target.segments {
-        if segment.marker_name.starts_with("APP")
-            || segment.marker_name == "COM"
-            || segment.marker_name == "SOI"
-            || segment.marker_name == "SOS"
-            || segment.marker_name == "EOI"
-        {
-            continue;
-        }
-        let len = segment.data.len() + 2;
-        output.write_all(&[0xFF, segment.marker])?;
-        output.write_all(&(len as u16).to_be_bytes())?;
-        output.write_all(&segment.data)?;
-    }
-
-    for segment in &parsed_target.segments {
-        if segment.marker_name == "SOS" {
-            let len = segment.data.len() + 2;
-            output.write_all(&[0xFF, segment.marker])?;
-            output.write_all(&(len as u16).to_be_bytes())?;
-            output.write_all(&segment.data)?;
-        }
-    }
-
-    // Schreibe den Scan-Daten-Marker (SOS)
-    output.write_all(&parsed_target.scan_data)?;
-
-    // Falls kein End-Marker in den Scan-Daten enthalten ist, explizit EOI schreiben
-    if !parsed_target.scan_data.ends_with(&[0xFF, 0xD9]) {
-        output.write_all(&[0xFF, 0xD9])?;
-    }
-
+    // 🧾 Optional logging after writing
     if settings.debug {
-        // ▲❗ Logging nach finalem Schreiben der Datei
         let parsed_target_final = parse_jpeg_segments_default(&target_path)?;
         let _ = write_log(settings, "Segmente der fertig geschriebenen Zieldatei:");
         if let Err(e) = log_parsed_segments(settings, &parsed_target_final) {
@@ -110,14 +165,29 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
         }
     }
 
-    if let Err(e) = restore_file_times(settings, target_path_ref, &parsed_target, source) {
-        eprintln!(
-            "[WARN] Datei-Zeitstempel konnten nicht gesetzt werden: {}",
-            e
-        );
+    // ⏲ Restore timestamps
+    match mode {
+        InjectionMode::CopyMetadata => {
+            if let Some(parsed_target) = &parsed_target {
+                if let Err(e) = restore_file_times(settings, target_path_ref, parsed_target, source) {
+                    eprintln!(
+                        "[WARN] Datei-Zeitstempel konnten nicht gesetzt werden: {}",
+                        e
+                    );
+                }
+            }
+        }
+        InjectionMode::WriteFullJpeg => {
+            if let Err(e) = restore_file_times(settings, target_path_ref, source, source) {
+                eprintln!(
+                    "[WARN] Datei-Zeitstempel konnten nicht gesetzt werden: {}",
+                    e
+                );
+            }
+        }
     }
-    println!("[INFO] Alle Operationen abgeschlossen.");
 
+    println!("[INFO] Alle Operationen abgeschlossen.");
     Ok(())
 }
 

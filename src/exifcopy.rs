@@ -8,13 +8,13 @@ use exifcopy::parse_jpeg_segments;
 
 // LOGGING //
 
-use exifcopy::library::log::LogMode;
-use exifcopy::library::log::init_logging;
-use exifcopy::write_log;
+//use exifcopy::library::log::LogMode;
+//use exifcopy::library::log::init_logging;
+use exifcopy::{init_logging, LogMode, write_log};
 
 // COPYING THE DATA FROM SOURCE AND WRITING THE TARGET //
 
-use exifcopy::{inject_metadata_segments, log_parsed_segments};
+use exifcopy::{inject_metadata_segments, InjectionMode, log_parsed_segments};
 
 pub fn main() {
     match parse_arguments() {
@@ -40,8 +40,9 @@ pub fn main() {
                         }
                     }
 
+					// always use InjectionMode::CopyMetadata in Exifcopy
                     if let Err(e) =
-                        inject_metadata_segments(&write_settings, target_path, &parsed_source)
+                        inject_metadata_segments(&write_settings, target_path, InjectionMode::CopyMetadata, &parsed_source)
                     {
                         eprintln!("[ERROR] {}", e);
                         std::process::exit(1);
