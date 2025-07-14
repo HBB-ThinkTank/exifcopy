@@ -32,7 +32,7 @@ The help screen includes version, build date, license, author and repository inf
 - `--help` / `-h`\
   Show help screen with usage and all available parameters
 
-- `--debug` / `-d`\
+- `--log` / `-l`\
   Enable debug logging for verbose output (writes a `.log` file)
 
 - `--keepdate=<n>` / `-kd <n>`\

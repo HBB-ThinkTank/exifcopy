@@ -18,8 +18,8 @@ pub use library::jpeg::{
 
 // LOGGING //
 
-pub use library::log::{init_logging, LogMode, write_log};
+pub use library::log::{LogMode, init_logging, write_log};
 
 // COPYING THE DATA FROM SOURCE AND WRITING THE TARGET //
 
-pub use library::write::{inject_metadata_segments, InjectionMode, log_parsed_segments};
+pub use library::write::{InjectionMode, inject_metadata_segments, log_parsed_segments};

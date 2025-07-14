@@ -6,6 +6,7 @@ use std::path::Path;
 
 // PARSING THE SOURCE JPEG //
 
+#[derive(Clone)]
 pub struct JpegSegment {
     pub marker: u8,
     pub data: Vec<u8>,
@@ -372,15 +373,46 @@ pub fn build_marker_map() -> HashMap<u8, MarkerInfo> {
     markers
 }
 
+/// Identifies the type of metadata contained in a given JPEG segment.
+///
+/// This function inspects the beginning of the segment's binary data
+/// and returns a short identifier for known metadata formats.
+///
+/// # Supported Identifiers
+/// - `"EXIF"` – Exchangeable Image File Format
+/// - `"XMP"` – Adobe's Extensible Metadata Platform
+/// - `"ICC"` – ICC colour profiles
+/// - `"IPTC"` – IPTC metadata inside Photoshop IRB (Image Resource Blocks)
+/// - `"IRB"` – Photoshop IRB container without IPTC
+/// - `"Adobe"`, `"JFIF"`, `"JFXX"`, `"MPF"`, `"CIFF"`, `"FLIR"`, `"GDepth"`, `"MetaInfo"`
+///
+/// # Parameters
+/// * `segment` – Reference to the JPEG segment to inspect
+///
+/// # Returns
+/// * `Some("...")` if the type could be identified
+/// * `None` if no known pattern was matched
 pub fn identify_metadata_type(segment: &JpegSegment) -> Option<&'static str> {
     if segment.data.len() < 12 {
         return None;
     }
-    match &segment.data[..] {
+
+    let d = &segment.data;
+
+    // Photoshop-specific logic: may contain IPTC or generic IRB
+    if d.starts_with(b"Photoshop 3.0\0") {
+        if d.len() > 18 && d[14..].starts_with(b"8BIM") {
+            return Some("IPTC");
+        } else {
+            return Some("IRB");
+        }
+    }
+
+    // Match against known metadata segment headers
+    match d {
         d if d.starts_with(b"Exif\0\0") => Some("EXIF"),
         d if d.starts_with(b"http://ns.adobe.com/xap/1.0/") => Some("XMP"),
         d if d.starts_with(b"ICC_PROFILE\0") => Some("ICC"),
-        d if d.starts_with(b"Photoshop 3.0\0") && d[14..].starts_with(b"8BIM") => Some("IPTC"),
         d if d.starts_with(b"Adobe") => Some("Adobe"),
         d if d.starts_with(b"JFIF\0") => Some("JFIF"),
         d if d.starts_with(b"JFXX\0") => Some("JFXX"),

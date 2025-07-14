@@ -57,21 +57,27 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
     };
 
     // 📝 Optional logging before writing
-	match mode {
+    match mode {
         InjectionMode::CopyMetadata => {
-			if settings.debug {
-				if let Some(parsed) = &parsed_target {
-					let _ = write_log(settings, "Segmente der ursprünglichen Zieldatei:");
-					if let Err(e) = log_parsed_segments(settings, parsed) {
-						eprintln!("[ERROR] Log failed: {}", e);
-					}
-				}
-			}
-		}
-		InjectionMode::WriteFullJpeg => {
-			// Do nothing – mode does not use &parsed_target, so nothing to log
-		}
-	}
+            if settings.debug {
+                if let Some(parsed) = &parsed_target {
+                    let _ = write_log(
+                        settings,
+                        &format!(
+                            "Segments of {} before writing:",
+                            target_path.as_ref().display()
+                        ),
+                    );
+                    if let Err(e) = log_parsed_segments(settings, parsed) {
+                        eprintln!("[ERROR] Log failed: {}", e);
+                    }
+                }
+            }
+        }
+        InjectionMode::WriteFullJpeg => {
+            // Do nothing – mode does not use &parsed_target, so nothing to log
+        }
+    }
 
     // 📄 Open output file
     let mut output = OpenOptions::new()
@@ -135,20 +141,20 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
         InjectionMode::WriteFullJpeg => {
             // 📦 Write all segments from the parsed source as-is
             for segment in &source.segments {
-				if segment.marker_name != "SOI" && segment.marker_name != "EOI" {
-					let len = segment.data.len() + 2;
-					output.write_all(&[0xFF, segment.marker])?;
-					output.write_all(&(len as u16).to_be_bytes())?;
-					output.write_all(&segment.data)?;
-				}
+                if segment.marker_name != "SOI" && segment.marker_name != "EOI" {
+                    let len = segment.data.len() + 2;
+                    output.write_all(&[0xFF, segment.marker])?;
+                    output.write_all(&(len as u16).to_be_bytes())?;
+                    output.write_all(&segment.data)?;
+                }
             }
 
             // 🖼 Write image scan data
-                output.write_all(&source.scan_data)?;
+            output.write_all(&source.scan_data)?;
 
             // 🛑 Ensure EOI marker if needed
-			let has_eoi_segment = source.segments.iter().any(|s| s.marker_name == "EOI");
-			let has_eoi_in_scan = source.scan_data.ends_with(&[0xFF, 0xD9]);
+            let has_eoi_segment = source.segments.iter().any(|s| s.marker_name == "EOI");
+            let has_eoi_in_scan = source.scan_data.ends_with(&[0xFF, 0xD9]);
 
             if !has_eoi_segment && !has_eoi_in_scan {
                 output.write_all(&[0xFF, 0xD9])?;
@@ -159,7 +165,13 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
     // 🧾 Optional logging after writing
     if settings.debug {
         let parsed_target_final = parse_jpeg_segments_default(&target_path)?;
-        let _ = write_log(settings, "Segmente der fertig geschriebenen Zieldatei:");
+        let _ = write_log(
+            settings,
+            &format!(
+                "Segments of {} after writing:",
+                target_path.as_ref().display()
+            ),
+        );
         if let Err(e) = log_parsed_segments(settings, &parsed_target_final) {
             eprintln!("[ERROR] Log failed: {}", e);
         }
@@ -169,7 +181,8 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
     match mode {
         InjectionMode::CopyMetadata => {
             if let Some(parsed_target) = &parsed_target {
-                if let Err(e) = restore_file_times(settings, target_path_ref, parsed_target, source) {
+                if let Err(e) = restore_file_times(settings, target_path_ref, parsed_target, source)
+                {
                     eprintln!(
                         "[WARN] Datei-Zeitstempel konnten nicht gesetzt werden: {}",
                         e
@@ -191,26 +204,42 @@ pub fn inject_metadata_segments<P: AsRef<Path>>(
     Ok(())
 }
 
+/// Logs all segments of a ParsedJpeg with marker, name, description,
+/// metadata type (if available) and length.
+///
+/// # Arguments
+///
+/// * `settings` – Logging preferences and output path
+/// * `source` – Parsed JPEG to inspect
+///
+/// # Output
+///
+/// Writes a table of all segments with optional metadata type to log.
 pub fn log_parsed_segments(settings: &WriteSettings, source: &ParsedJpeg) -> std::io::Result<()> {
     let mut log_output = String::new();
-    log_output.push_str("Marker  | Name     | Beschreibung                         | Länge\n");
-    log_output.push_str("--------|----------|--------------------------------------|------\n");
+    log_output
+        .push_str("Marker | Name     | Beschreibung                         | Typ     | Länge\n");
+    log_output
+        .push_str("-------|----------|--------------------------------------|---------|-------\n");
 
     for segment in &source.segments {
+        let metadata_type = segment.metadata_type.as_deref().unwrap_or("-");
         if let Some(info) = build_marker_map().get(&segment.marker) {
             log_output.push_str(&format!(
-                "0xFF{:02X} | {:<8} | {:<36} | {}\n",
+                "0xFF{:02X} | {:<8} | {:<36} | {:<7} | {:>5}\n",
                 segment.marker,
                 info.name,
                 info.description,
+                metadata_type,
                 segment.data.len()
             ));
         } else {
             log_output.push_str(&format!(
-                "0xFF{:02X} | {:<8} | {:<36} | {}\n",
+                "0xFF{:02X} | {:<8} | {:<36} | {:<7} | {:>5}\n",
                 segment.marker,
                 "UNKNOWN",
                 "Unbekanntes Segment",
+                metadata_type,
                 segment.data.len()
             ));
         }

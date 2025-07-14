@@ -1,7 +1,7 @@
+use clap::ValueEnum;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use clap::ValueEnum;
 
 use crate::WriteSettings;
 use log::{LevelFilter, info};
@@ -53,7 +53,6 @@ pub fn write_log(settings: &WriteSettings, msg: &str) -> std::io::Result<()> {
         LogMode::None => return Ok(()),
         LogMode::Console => println!("{}", msg),
         LogMode::FileOnly | LogMode::Both => {
-
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
