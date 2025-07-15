@@ -5,6 +5,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] - 2025-07-15
+
+- Improved error handling in `parse_jpeg_segments()`: now validates input file path and returns descriptive errors if the file is missing or unreadable.
+
 ## [Unreleased] - 2025-07-08
 
 ### Internal Changes

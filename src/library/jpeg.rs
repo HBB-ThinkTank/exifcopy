@@ -31,14 +31,52 @@ pub struct MarkerInfo {
     pub description: &'static str,
 }
 
+/// Parses all JPEG segments from a file and optionally includes scan data.
+/// 
+/// # Arguments
+/// * `path` – Path to the JPEG file
+/// * `include_scan_data` – If true, the compressed scan data will be extracted
+///
+/// # Returns
+/// * `ParsedJpeg` struct containing all parsed metadata segments, optional scan data,
+///   and file system timestamps
+///
+/// # Errors
+/// * Returns an error if the file is not readable, not a valid JPEG, or structurally incomplete
+
 pub fn parse_jpeg_segments<P: AsRef<Path>>(
     path: P,
     include_scan_data: bool,
 ) -> std::io::Result<ParsedJpeg> {
-    let file = File::open(&path)?;
+    let path_ref = path.as_ref();
+
+    // Verify the input path exists and is a file
+    if !path_ref.exists() {
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            format!("Input file not found: {}", path_ref.display()),
+        ));
+    }
+
+    if !path_ref.is_file() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            format!("Input is not a file: {}", path_ref.display()),
+        ));
+    }
+
+    // Attempt to open the file with explicit error reporting
+    let file = File::open(&path_ref).map_err(|e| {
+        Error::new(
+            e.kind(),
+            format!("Cannot open input file {}: {}", path_ref.display(), e),
+        )
+    })?;
+
     let mut reader = BufReader::new(file);
     let mut buf = Vec::new();
 
+    // Check for SOI marker (0xFFD8)
     let mut soi = [0; 2];
     reader.read_exact(&mut soi)?;
 
@@ -49,37 +87,35 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(
         ));
     }
 
-    buf.extend_from_slice(&soi); // fügt 0xFF, 0xD8 an den Anfang von buf
+    buf.extend_from_slice(&soi); // Start buffer with SOI
     reader.read_to_end(&mut buf)?;
 
     let marker_map = build_marker_map();
     let mut segments = Vec::new();
     let mut scan_data = Vec::new();
     let mut i = 0;
-
-    #[allow(unused_assignments)]
     let mut saw_sos = false;
 
+    // Iterate through the entire JPEG structure
     while i + 1 < buf.len() {
         if buf[i] == 0xFF {
             if buf[i + 1] == 0x00 {
                 i += 2;
                 continue;
             }
+
+            // After SOS: only process specific marker types
             if saw_sos {
-                if i + 1 >= buf.len() {
-                    break;
-                }
                 let marker_byte = buf[i + 1];
-                if !(marker_byte == 0xD9
-                    || marker_byte == 0xFE
-                    || (0xE0..=0xEF).contains(&marker_byte))
-                {
+                if !(marker_byte == 0xD9 || marker_byte == 0xFE || (0xE0..=0xEF).contains(&marker_byte)) {
                     i += 1;
                     continue;
                 }
             }
+
             let marker = buf[i + 1];
+
+            // Handle standalone markers without length fields (SOI, EOI)
             if marker == 0xD8 || marker == 0xD9 {
                 segments.push(JpegSegment {
                     marker,
@@ -87,11 +123,11 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(
                     marker_name: marker_map
                         .get(&marker)
                         .map(|m| m.name.to_string())
-                        .unwrap_or("Unbekannt".into()),
+                        .unwrap_or("Unknown".into()),
                     segment_type: marker_map
                         .get(&marker)
                         .map(|m| m.segment_type.to_string())
-                        .unwrap_or("Unbekannt".into()),
+                        .unwrap_or("Unknown".into()),
                     description: marker_map
                         .get(&marker)
                         .map(|m| m.description.to_string())
@@ -101,15 +137,21 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(
                 i += 2;
                 continue;
             }
+
             i += 2;
+
+            // Read segment length
             if i + 2 > buf.len() {
                 break;
             }
+
             let length = ((buf[i] as usize) << 8) + (buf[i + 1] as usize);
             i += 2;
+
             if i + length - 2 > buf.len() {
                 break;
             }
+
             let data = buf[i..i + length - 2].to_vec();
 
             let temp_segment = JpegSegment {
@@ -118,11 +160,11 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(
                 marker_name: marker_map
                     .get(&marker)
                     .map(|m| m.name.to_string())
-                    .unwrap_or("Unbekannt".into()),
+                    .unwrap_or("Unknown".into()),
                 segment_type: marker_map
                     .get(&marker)
                     .map(|m| m.segment_type.to_string())
-                    .unwrap_or("Unbekannt".into()),
+                    .unwrap_or("Unknown".into()),
                 description: marker_map
                     .get(&marker)
                     .map(|m| m.description.to_string())
@@ -138,12 +180,14 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(
                 .map(|s| s.to_string()),
             };
 
+            // Save metadata segments, or keep segment after SOS only if useful
             if !saw_sos || temp_segment.metadata_type.is_some() {
                 segments.push(temp_segment);
             }
 
             i += length - 2;
 
+            // Start of Scan (SOS): store remaining buffer as compressed image data
             if marker == 0xDA {
                 if !saw_sos {
                     saw_sos = true;
@@ -158,8 +202,8 @@ pub fn parse_jpeg_segments<P: AsRef<Path>>(
         }
     }
 
-    // Dateisystem Zeitstempel anrufen
-    let meta = metadata(path.as_ref()).ok();
+    // File system timestamps (optional)
+    let meta = metadata(path_ref).ok();
     let (ctime, mtime) = meta
         .as_ref()
         .map(|m| {
